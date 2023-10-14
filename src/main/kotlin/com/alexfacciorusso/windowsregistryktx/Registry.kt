@@ -46,10 +46,12 @@ value class RegistryPath internal constructor(val components: List<String> = emp
 
 interface RegistryPathable {
     operator fun get(path: RegistryPath): RegistryKey
+
+    operator fun get(vararg path: String): RegistryKey = this[RegistryPath(*path)]
+    operator fun get(path: String): RegistryKey = this[RegistryPath(path)]
 }
 
-operator fun RegistryPathable.get(vararg path: String): RegistryKey = this[RegistryPath(*path)]
-operator fun RegistryPathable.get(path: String): RegistryKey = this[RegistryPath(path)]
+private operator fun RegistryPathable.get(hkey: Hkeys): RegistryKey = this[hkey.name]
 
 class RegistryKey internal constructor(path: RegistryPath) : RegistryPathable {
     val fullPath = path
@@ -68,8 +70,6 @@ class RegistryKey internal constructor(path: RegistryPath) : RegistryPathable {
     override operator fun get(path: RegistryPath): RegistryKey = RegistryKey(this.fullPath + path)
 
     fun parent(): RegistryKey? = fullPath.parent()?.let { RegistryKey(it) }
-
-    fun value(name: String): RegistryValue = RegistryValue(this, name)
 
     fun openHandle(accessLevel: Int = KEY_ALL_ACCESS): CloseableHkey =
         CloseableHkey(Advapi32Util.registryGetKey(rootHandle, pathWithoutRoot.toString(), accessLevel).value)
@@ -99,165 +99,50 @@ class RegistryKey internal constructor(path: RegistryPath) : RegistryPathable {
         }
     }.flowOn(Dispatchers.IO)
 
+    fun delete() = Advapi32Util.registryDeleteKey(rootHandle, pathWithoutRoot.toString())
+
+    fun exists(): Boolean = Advapi32Util.registryKeyExists(rootHandle, pathWithoutRoot.toString())
+
     override fun toString(): String = "RegistryKey($fullPath)"
 }
 
-@MustBeDocumented
-@Retention(value = AnnotationRetention.BINARY)
-@RequiresOptIn(
-    level = RequiresOptIn.Level.WARNING,
-    message = "This is a delicate API and its use requires care, and it may be even removed in future."
-)
-public annotation class DelicateRegistryApi
-
-@Suppress("MemberVisibilityCanBePrivate")
-class RegistryValue internal constructor(val parentKey: RegistryKey, val name: String) {
-    private fun <T> getOrNull(block: () -> T?): T? = try {
-        block()
-    } catch (e: Exception) {
-        null
-    }
+abstract class RegistryValue<T : Any?> internal constructor(val parentKey: RegistryKey, val name: String) {
+    abstract val typeName: String
 
     private fun errorForValue(type: String): Nothing =
         error("$type value is not existing for key ${parentKey.pathWithoutRoot}")
 
     private fun <T> flowInternal(
-        emitOnStart: Boolean = true,
+        emitOnStart: Boolean,
         block: () -> T?,
     ): Flow<T?> = parentKey.flowChanges(emitOnStart).map { block() }.distinctUntilChanged()
 
-    // region Generic
-    @DelicateRegistryApi
-    fun getOrNull(): Any? = getOrNull {
-        Advapi32Util.registryGetValue(parentKey.rootHandle, parentKey.pathWithoutRoot.toString(), name)
-    }
+    protected abstract fun retrieveValue(): T
 
-    @DelicateRegistryApi
-    fun get(): Any = getOrNull() ?: errorForValue("")
+    fun exists(): Boolean =
+        Advapi32Util.registryValueExists(parentKey.rootHandle, parentKey.pathWithoutRoot.toString(), name)
 
-    @DelicateRegistryApi
-    fun <T : Any> getAs(
-        clazz: Class<T>,
-    ): T? = getOrNull()?.let { if (clazz.isInstance(it)) clazz.cast(it) else error("Type not respected") }
+    fun read(): T? =
+        if (exists()) retrieveValue() else null
 
-    @DelicateRegistryApi
-    inline fun <reified T : Any> getAs(): T? = getAs(T::class.java)
+    fun readOrThrow(): T =
+        read() ?: errorForValue(typeName)
 
-    @DelicateRegistryApi
-    fun flow(
-        emitOnStart: Boolean = true,
-    ): Flow<Any?> = parentKey.flowChanges(emitOnStart).map { getOrNull() }.distinctUntilChanged()
+    abstract fun write(value: T)
 
-    @DelicateRegistryApi
-    fun <T : Any> flowAs(
-        emitOnStart: Boolean = true,
-        clazz: Class<T>,
-    ): Flow<T?> = flowInternal(emitOnStart) { getAs(clazz) }
+    fun delete() = Advapi32Util.registryDeleteValue(parentKey.rootHandle, parentKey.pathWithoutRoot.toString(), name)
 
-    @DelicateRegistryApi
-    inline fun <reified T : Any> flowAs(
-        emitOnStart: Boolean = true,
-    ): Flow<T?> = flowAs(emitOnStart, T::class.java)
-    // endregion
-
-    // region String
-    fun asStringOrNull(): String? =
-        getOrNull {
-            Advapi32Util.registryGetStringValue(parentKey.rootHandle, parentKey.pathWithoutRoot.toString(), name)
-        }
-
-    fun asString(): String = asStringOrNull() ?: errorForValue("String")
-
-    fun flowString(
-        emitCurrentValue: Boolean = true,
-    ): Flow<String?> = flowInternal(emitCurrentValue) { asStringOrNull() }
-    // endregion
-
-    // region Long
-    fun asLongOrNull(): Long? = getOrNull {
-        Advapi32Util.registryGetLongValue(parentKey.rootHandle, parentKey.pathWithoutRoot.toString(), name)
-    }
-
-    fun asLong(): Long = asLongOrNull() ?: errorForValue("Long")
-    fun flowLong(
-        emitOnStart: Boolean = true,
-    ): Flow<Long?> = flowInternal(emitOnStart) { asLongOrNull() }
-    // endregion
-
-    // region Int
-    fun asIntOrNull(): Int? = getOrNull {
-        Advapi32Util.registryGetIntValue(parentKey.rootHandle, parentKey.pathWithoutRoot.toString(), name)
-    }
-
-    fun asInt(): Int = asIntOrNull() ?: errorForValue("Int")
-    fun flowInt(
-        emitOnStart: Boolean = true,
-    ): Flow<Int?> = flowInternal(emitOnStart) { asIntOrNull() }
-    // endregion
-
-    // region Boolean
-    fun asBooleanOrNull(): Boolean? = asIntOrNull()?.let { it != 0 }
-
-    fun asBoolean(): Boolean = asBooleanOrNull() ?: errorForValue("Boolean")
-    fun flowBoolean(
-        emitOnStart: Boolean = true,
-    ): Flow<Boolean?> = flowInternal(emitOnStart) { asBooleanOrNull() }
-    // endregion
-
-    // region Binary
-    fun asBinary(): ByteArray = asBinaryOrNull() ?: errorForValue("Binary")
-    fun asBinaryOrNull(): ByteArray? = getOrNull {
-        Advapi32Util.registryGetBinaryValue(parentKey.rootHandle, parentKey.pathWithoutRoot.toString(), name)
-    }
-
-    fun flowBinary(
-        emitOnStart: Boolean = true,
-    ): Flow<ByteArray?> = flowInternal(emitOnStart) { asBinaryOrNull() }
-    // endregion
-
-    // region String list
-    fun asStringListOrNull(): List<String>? = getOrNull {
-        Advapi32Util.registryGetStringArray(parentKey.rootHandle, parentKey.pathWithoutRoot.toString(), name)?.toList()
-    }
-
-    fun asStringList(): List<String> =
-        asStringListOrNull() ?: errorForValue("String list")
-
-    fun flowStringList(
-        emitOnStart: Boolean = true,
-    ): Flow<List<String>?> = flowInternal(emitOnStart) { asStringListOrNull() }
-    // endregion
-
-    // region Expandable string
-    fun asExpandableStringOrNull(): String? = getOrNull {
-        Advapi32Util.registryGetExpandableStringValue(parentKey.rootHandle, parentKey.pathWithoutRoot.toString(), name)
-    }
-
-    fun asExpandableString(): String = asExpandableStringOrNull() ?: errorForValue("Expandable string")
-
-    fun flowExpandableString(
-        emitOnStart: Boolean = true,
-    ): Flow<String?> = flowInternal(emitOnStart) { asExpandableStringOrNull() }
-    // endregion
-
-    override fun toString(): String = "RegistryValue(parent=$parentKey, name=$name)"
-    override fun equals(other: Any?): Boolean =
-        other is RegistryValue && other.parentKey == parentKey && other.name == name
-
-    override fun hashCode(): Int {
-        var result = parentKey.hashCode()
-        result = 31 * result + name.hashCode()
-        return result
-    }
+    fun flowChanges(emitFirstValue: Boolean = true): Flow<T?> =
+        flowInternal(emitOnStart = emitFirstValue) { read() }
 }
 
 object Registry : RegistryPathable {
     override fun get(path: RegistryPath): RegistryKey = RegistryKey(path)
 
-    val currentUser = this[Hkeys.HKEY_CURRENT_USER.name]
-    val localMachine = this[Hkeys.HKEY_LOCAL_MACHINE.name]
-    val classesRoot = this[Hkeys.HKEY_CLASSES_ROOT.name]
-    val users = this[Hkeys.HKEY_USERS.name]
-    val currentConfig = this[Hkeys.HKEY_CURRENT_CONFIG.name]
-    val performanceData = this[Hkeys.HKEY_PERFORMANCE_DATA.name]
+    val currentUser = this[Hkeys.HKEY_CURRENT_USER]
+    val localMachine = this[Hkeys.HKEY_LOCAL_MACHINE]
+    val classesRoot = this[Hkeys.HKEY_CLASSES_ROOT]
+    val users = this[Hkeys.HKEY_USERS]
+    val currentConfig = this[Hkeys.HKEY_CURRENT_CONFIG]
+    val performanceData = this[Hkeys.HKEY_PERFORMANCE_DATA]
 }
