@@ -1,6 +1,7 @@
 plugins {
     kotlin("jvm") version "1.9.10"
     `java-library`
+    `maven-publish`
 }
 
 group = "com.alexfacciorusso"
@@ -16,6 +17,14 @@ dependencies {
 
     testImplementation(kotlin("test"))
     testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.7.3")
+}
+
+publishing {
+    publications {
+        register<MavenPublication>("main") {
+            from(components["java"])
+        }
+    }
 }
 
 tasks.test {
