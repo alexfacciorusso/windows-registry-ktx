@@ -44,16 +44,28 @@ value class RegistryPath internal constructor(val components: List<String> = emp
         else RegistryPath(components.dropLast(1))
 }
 
-interface RegistryPathable {
+interface Pathable {
     operator fun get(path: RegistryPath): RegistryKey
 
     operator fun get(vararg path: String): RegistryKey = this[RegistryPath(*path)]
     operator fun get(path: String): RegistryKey = this[RegistryPath(path)]
 }
 
-private operator fun RegistryPathable.get(hkey: Hkeys): RegistryKey = this[hkey.name]
+private operator fun Pathable.get(hkey: Hkeys): RegistryKey = this[hkey.name]
 
-class RegistryKey internal constructor(path: RegistryPath) : RegistryPathable {
+interface Writable<T : Any?> {
+    fun write(value: T)
+}
+
+interface Deleteable {
+    fun delete()
+}
+
+interface Existable {
+    fun exists(): Boolean
+}
+
+class RegistryKey internal constructor(path: RegistryPath) : Pathable, Deleteable, Existable {
     val fullPath = path
     val pathWithoutRoot = RegistryPath(fullPath.components.drop(1))
 
@@ -71,7 +83,8 @@ class RegistryKey internal constructor(path: RegistryPath) : RegistryPathable {
 
     fun parent(): RegistryKey? = fullPath.parent()?.let { RegistryKey(it) }
 
-    fun openHandle(accessLevel: Int = KEY_ALL_ACCESS): CloseableHkey =
+    @Suppress("SameParameterValue")
+    private fun openHandle(accessLevel: Int = KEY_ALL_ACCESS): CloseableHkey =
         CloseableHkey(Advapi32Util.registryGetKey(rootHandle, pathWithoutRoot.toString(), accessLevel).value)
 
     fun flowChanges(
@@ -99,28 +112,39 @@ class RegistryKey internal constructor(path: RegistryPath) : RegistryPathable {
         }
     }.flowOn(Dispatchers.IO)
 
-    fun delete() = Advapi32Util.registryDeleteKey(rootHandle, pathWithoutRoot.toString())
+    override fun delete() = Advapi32Util.registryDeleteKey(rootHandle, pathWithoutRoot.toString())
 
-    fun exists(): Boolean = Advapi32Util.registryKeyExists(rootHandle, pathWithoutRoot.toString())
+    override fun exists(): Boolean = Advapi32Util.registryKeyExists(rootHandle, pathWithoutRoot.toString())
 
     override fun toString(): String = "RegistryKey($fullPath)"
+
+    override fun equals(other: Any?): Boolean {
+        if (this === other) return true
+        if (other !is RegistryKey) return false
+
+        if (fullPath != other.fullPath) return false
+
+        return true
+    }
+
+    override fun hashCode(): Int = fullPath.hashCode()
 }
 
-abstract class RegistryValue<T : Any?> internal constructor(val parentKey: RegistryKey, val name: String) {
+abstract class ReadableRegistryValue<T : Any?> internal constructor(val parentKey: RegistryKey, val name: String) :
+    Existable,
+    Deleteable {
     abstract val typeName: String
 
     private fun errorForValue(type: String): Nothing =
         error("$type value is not existing for key ${parentKey.pathWithoutRoot}")
 
-    private fun <T> flowInternal(
-        emitOnStart: Boolean,
-        block: () -> T?,
-    ): Flow<T?> = parentKey.flowChanges(emitOnStart).map { block() }.distinctUntilChanged()
-
     protected abstract fun retrieveValue(): T
 
-    fun exists(): Boolean =
+    override fun exists(): Boolean =
         Advapi32Util.registryValueExists(parentKey.rootHandle, parentKey.pathWithoutRoot.toString(), name)
+
+    override fun delete() =
+        Advapi32Util.registryDeleteValue(parentKey.rootHandle, parentKey.pathWithoutRoot.toString(), name)
 
     fun read(): T? =
         if (exists()) retrieveValue() else null
@@ -128,15 +152,11 @@ abstract class RegistryValue<T : Any?> internal constructor(val parentKey: Regis
     fun readOrThrow(): T =
         read() ?: errorForValue(typeName)
 
-    abstract fun write(value: T)
-
-    fun delete() = Advapi32Util.registryDeleteValue(parentKey.rootHandle, parentKey.pathWithoutRoot.toString(), name)
-
-    fun flowChanges(emitFirstValue: Boolean = true): Flow<T?> =
-        flowInternal(emitOnStart = emitFirstValue) { read() }
+    fun flowChanges(emitCurrentValue: Boolean = true): Flow<T?> =
+        parentKey.flowChanges(emitCurrentValue).map { read() }.distinctUntilChanged()
 }
 
-object Registry : RegistryPathable {
+object Registry : Pathable {
     override fun get(path: RegistryPath): RegistryKey = RegistryKey(path)
 
     val currentUser = this[Hkeys.HKEY_CURRENT_USER]

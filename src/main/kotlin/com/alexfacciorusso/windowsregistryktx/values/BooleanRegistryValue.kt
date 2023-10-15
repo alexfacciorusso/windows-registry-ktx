@@ -1,9 +1,12 @@
 package com.alexfacciorusso.windowsregistryktx.values
 
 import com.alexfacciorusso.windowsregistryktx.RegistryKey
-import com.alexfacciorusso.windowsregistryktx.RegistryValue
+import com.alexfacciorusso.windowsregistryktx.ReadableRegistryValue
+import com.alexfacciorusso.windowsregistryktx.Writable
 
-class BooleanRegistryValue(parentKey: RegistryKey, name: String) : RegistryValue<Boolean>(parentKey, name) {
+class BooleanRegistryValue internal constructor(parentKey: RegistryKey, name: String) : ReadableRegistryValue<Boolean>(parentKey, name),
+    Writable<Boolean> {
+
     private val intRegistryValue = IntRegistryValue(parentKey, name)
 
     override val typeName: String = "Boolean"

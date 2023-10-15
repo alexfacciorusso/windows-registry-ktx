@@ -1,10 +1,11 @@
 package com.alexfacciorusso.windowsregistryktx.values
 
 import com.alexfacciorusso.windowsregistryktx.RegistryKey
-import com.alexfacciorusso.windowsregistryktx.RegistryValue
+import com.alexfacciorusso.windowsregistryktx.ReadableRegistryValue
+import com.alexfacciorusso.windowsregistryktx.Writable
 import com.sun.jna.platform.win32.Advapi32Util
 
-class LongRegistryValue(parentKey: RegistryKey, name: String) : RegistryValue<Long>(parentKey, name) {
+class LongRegistryValue internal constructor(parentKey: RegistryKey, name: String) : ReadableRegistryValue<Long>(parentKey, name), Writable<Long> {
     override val typeName: String = "String"
 
     override fun retrieveValue(): Long =
