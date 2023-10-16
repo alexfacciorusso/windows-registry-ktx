@@ -3,7 +3,7 @@ package com.alexfacciorusso.windowsregistryktx.values
 import com.alexfacciorusso.windowsregistryktx.RegistryKey
 import com.alexfacciorusso.windowsregistryktx.RegistryTestHelper
 import com.alexfacciorusso.windowsregistryktx.ReadableRegistryValue
-import com.alexfacciorusso.windowsregistryktx.Writable
+import com.alexfacciorusso.windowsregistryktx.WritableRegistryValue
 
 class IntRegistryValueTest : BaseRegistryValueTest<Int>("Int") {
     override val testContents: List<Int> = listOf(1, 2, 3)
@@ -13,7 +13,7 @@ class IntRegistryValueTest : BaseRegistryValueTest<Int>("Int") {
 
     override fun RegistryTestHelper.readResultData(valueName: String): Int = readInt(valueName)
 
-    override fun RegistryKey.getWritable(valueName: String): Writable<Int> = intValue(valueName)
+    override fun RegistryKey.getWritable(valueName: String): WritableRegistryValue<Int> = intValue(valueName)
 
     override fun RegistryTestHelper.writeDataToKey(valueName: String, value: Int) {
         writeInt(valueName, value)

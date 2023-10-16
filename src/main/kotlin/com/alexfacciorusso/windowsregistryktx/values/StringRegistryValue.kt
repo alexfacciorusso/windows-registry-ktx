@@ -1,13 +1,11 @@
 package com.alexfacciorusso.windowsregistryktx.values
 
 import com.alexfacciorusso.windowsregistryktx.RegistryKey
-import com.alexfacciorusso.windowsregistryktx.ReadableRegistryValue
-import com.alexfacciorusso.windowsregistryktx.Writable
+import com.alexfacciorusso.windowsregistryktx.WritableRegistryValue
 import com.sun.jna.platform.win32.Advapi32Util
 
 class StringRegistryValue internal constructor(parentKey: RegistryKey, name: String) :
-    ReadableRegistryValue<String>(parentKey, name),
-    Writable<String> {
+    WritableRegistryValue<String>(parentKey, name) {
     override val typeName: String = "String"
 
     override fun retrieveValue(): String =
@@ -18,3 +16,6 @@ class StringRegistryValue internal constructor(parentKey: RegistryKey, name: Str
 }
 
 fun RegistryKey.stringValue(name: String) = StringRegistryValue(this, name)
+
+//operator fun <T> Writable<T>.setValue(thisRef: Any?, property: ) =
+//    write(property)

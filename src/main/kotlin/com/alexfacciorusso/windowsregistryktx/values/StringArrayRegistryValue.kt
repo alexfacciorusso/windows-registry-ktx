@@ -1,12 +1,11 @@
 package com.alexfacciorusso.windowsregistryktx.values
 
 import com.alexfacciorusso.windowsregistryktx.RegistryKey
-import com.alexfacciorusso.windowsregistryktx.ReadableRegistryValue
-import com.alexfacciorusso.windowsregistryktx.Writable
+import com.alexfacciorusso.windowsregistryktx.WritableRegistryValue
 import com.sun.jna.platform.win32.Advapi32Util
 
 class StringArrayRegistryValue internal constructor(parentKey: RegistryKey, name: String) :
-    ReadableRegistryValue<List<String>>(parentKey, name), Writable<List<String>> {
+    WritableRegistryValue<List<String>>(parentKey, name) {
     override val typeName: String = "StringArray"
 
     override fun retrieveValue(): List<String> =

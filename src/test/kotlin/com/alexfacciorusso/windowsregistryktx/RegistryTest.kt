@@ -8,6 +8,8 @@ import kotlin.test.AfterTest
 import kotlin.test.BeforeTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
+import kotlin.test.assertNull
 
 //    @Test
 //    fun `binary reading`() = readingTest(
@@ -62,21 +64,21 @@ class RegistryTest {
 
         assertEquals(
             expected = valueContent,
-            actual = Registry[testHelper.testPath].stringValue(valueName).read()
+            actual = Registry.subKey(testHelper.testPath).stringValue(valueName).read()
         )
 
-        Registry[testHelper.testPath].stringValue(valueName).delete()
+        Registry.subKey(testHelper.testPath).stringValue(valueName).delete()
 
         assertEquals(
             expected = null,
-            actual = Registry[testHelper.testPath].stringValue(valueName).read()
+            actual = Registry.subKey(testHelper.testPath).stringValue(valueName).read()
         )
     }
 
     @Test
     fun `registry key parent`() {
         val parentKey = Registry.currentUser
-        val key = parentKey["TestRegistryKTX_KeyParent"]
+        val key = parentKey.subKey("TestRegistryKTX_KeyParent")
 
         assertEquals(
             expected = parentKey,
@@ -87,8 +89,48 @@ class RegistryTest {
     @Test
     fun `pathable varargs`() {
         assertEquals(
-            expected = Registry.currentUser["TestRegistryKTX_PathableVarargs\\TestRegistryKTX_PathableVarargs2"],
-            actual = Registry.currentUser["TestRegistryKTX_PathableVarargs", "TestRegistryKTX_PathableVarargs2"]
+            expected = Registry.currentUser.subKey("TestRegistryKTX_PathableVarargs\\TestRegistryKTX_PathableVarargs2"),
+            actual = Registry.currentUser.subKey("TestRegistryKTX_PathableVarargs", "TestRegistryKTX_PathableVarargs2")
         )
+    }
+
+    @Test
+    fun `getter delegate`() {
+        val valueName = "TestRegistryKTX_GetterDelegate"
+        val valueContent = "test"
+
+        val value by Registry.subKey(testHelper.testPath).stringValue(valueName)
+
+        assertNull(value)
+
+        testHelper.writeString(valueName, valueContent)
+
+        assertEquals(
+            expected = valueContent,
+            actual = value
+        )
+    }
+
+    @Test
+    fun `setter delegate`() {
+        val valueName = "TestRegistryKTX_SetterDelegate"
+        val valueContent = "test"
+
+        var value by Registry.subKey(testHelper.testPath).stringValue(valueName)
+
+        // set
+        value = valueContent
+
+        assertEquals(
+            expected = valueContent,
+            actual = testHelper.readString(valueName)
+        )
+
+        // delete value
+        value = null
+
+        assertFalse {
+            testHelper.valueExists(valueName)
+        }
     }
 }

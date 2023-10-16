@@ -4,7 +4,7 @@ import com.alexfacciorusso.windowsregistryktx.RegistryKey
 import com.alexfacciorusso.windowsregistryktx.RegistryTestHelper
 import com.alexfacciorusso.windowsregistryktx.ReadableRegistryValue
 import com.alexfacciorusso.windowsregistryktx.SLEEP_FOR_REGISTRY_UPDATE_MS
-import com.alexfacciorusso.windowsregistryktx.Writable
+import com.alexfacciorusso.windowsregistryktx.WritableRegistryValue
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.toList
 import kotlinx.coroutines.launch
@@ -31,7 +31,7 @@ abstract class BaseRegistryValueTest<T>(private val typeName: String) {
 
     abstract val testContents: List<T>
     abstract fun RegistryKey.getValue(valueName: String): ReadableRegistryValue<T>
-    abstract fun RegistryKey.getWritable(valueName: String): Writable<T>
+    abstract fun RegistryKey.getWritable(valueName: String): WritableRegistryValue<T>
     abstract fun RegistryTestHelper.readResultData(valueName: String): T
     abstract fun RegistryTestHelper.writeDataToKey(valueName: String, value: T)
 

@@ -12,6 +12,7 @@ import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.map
+import kotlin.reflect.KProperty
 
 private enum class Hkeys(private val alternateName: String) {
     HKEY_CURRENT_USER(alternateName = "HKCU"),
@@ -27,7 +28,7 @@ private enum class Hkeys(private val alternateName: String) {
     }
 }
 
-private fun sanitisePath(path: String) = path.replace("/".toRegex(), Regex.escapeReplacement("\\"))
+private fun sanitisePath(path: String) = path.replace("/", "\\")
 
 @JvmInline
 value class RegistryPath internal constructor(val components: List<String> = emptyList()) {
@@ -45,17 +46,13 @@ value class RegistryPath internal constructor(val components: List<String> = emp
 }
 
 interface Pathable {
-    operator fun get(path: RegistryPath): RegistryKey
+    fun subKey(path: RegistryPath): RegistryKey
 
-    operator fun get(vararg path: String): RegistryKey = this[RegistryPath(*path)]
-    operator fun get(path: String): RegistryKey = this[RegistryPath(path)]
+    fun subKey(vararg path: String): RegistryKey = this.subKey(RegistryPath(*path))
+    fun subKey(path: String): RegistryKey = this.subKey(RegistryPath(path))
 }
 
-private operator fun Pathable.get(hkey: Hkeys): RegistryKey = this[hkey.name]
-
-interface Writable<T : Any?> {
-    fun write(value: T)
-}
+private fun Pathable.subKey(hkey: Hkeys): RegistryKey = this.subKey(hkey.name)
 
 interface Deleteable {
     fun delete()
@@ -65,7 +62,11 @@ interface Existable {
     fun exists(): Boolean
 }
 
-class RegistryKey internal constructor(path: RegistryPath) : Pathable, Deleteable, Existable {
+interface Creatable {
+    fun createIfNotExisting(): RegistryKey
+}
+
+class RegistryKey internal constructor(path: RegistryPath) : Pathable, Deleteable, Existable, Creatable {
     val fullPath = path
     val pathWithoutRoot = RegistryPath(fullPath.components.drop(1))
 
@@ -79,7 +80,7 @@ class RegistryKey internal constructor(path: RegistryPath) : Pathable, Deleteabl
         null -> error("Invalid root key")
     }
 
-    override operator fun get(path: RegistryPath): RegistryKey = RegistryKey(this.fullPath + path)
+    override fun subKey(path: RegistryPath): RegistryKey = RegistryKey(this.fullPath + path)
 
     fun parent(): RegistryKey? = fullPath.parent()?.let { RegistryKey(it) }
 
@@ -118,6 +119,11 @@ class RegistryKey internal constructor(path: RegistryPath) : Pathable, Deleteabl
 
     override fun toString(): String = "RegistryKey($fullPath)"
 
+    override fun createIfNotExisting(): RegistryKey {
+        if (!exists()) Advapi32Util.registryCreateKey(rootHandle, pathWithoutRoot.toString())
+        return this
+    }
+
     override fun equals(other: Any?): Boolean {
         if (this === other) return true
         if (other !is RegistryKey) return false
@@ -130,7 +136,7 @@ class RegistryKey internal constructor(path: RegistryPath) : Pathable, Deleteabl
     override fun hashCode(): Int = fullPath.hashCode()
 }
 
-abstract class ReadableRegistryValue<T : Any?> internal constructor(val parentKey: RegistryKey, val name: String) :
+abstract class ReadableRegistryValue<T> internal constructor(val parentKey: RegistryKey, val name: String) :
     Existable,
     Deleteable {
     abstract val typeName: String
@@ -156,13 +162,27 @@ abstract class ReadableRegistryValue<T : Any?> internal constructor(val parentKe
         parentKey.flowChanges(emitCurrentValue).map { read() }.distinctUntilChanged()
 }
 
-object Registry : Pathable {
-    override fun get(path: RegistryPath): RegistryKey = RegistryKey(path)
+@Suppress("NOTHING_TO_INLINE")
+inline operator fun <T> ReadableRegistryValue<T>.getValue(thisObj: Any?, property: KProperty<*>): T? = read()
 
-    val currentUser = this[Hkeys.HKEY_CURRENT_USER]
-    val localMachine = this[Hkeys.HKEY_LOCAL_MACHINE]
-    val classesRoot = this[Hkeys.HKEY_CLASSES_ROOT]
-    val users = this[Hkeys.HKEY_USERS]
-    val currentConfig = this[Hkeys.HKEY_CURRENT_CONFIG]
-    val performanceData = this[Hkeys.HKEY_PERFORMANCE_DATA]
+abstract class WritableRegistryValue<T : Any?>(
+    parentKey: RegistryKey,
+    name: String,
+) : ReadableRegistryValue<T>(parentKey, name) {
+    abstract fun write(value: T)
+}
+
+@Suppress("NOTHING_TO_INLINE")
+inline operator fun <T> WritableRegistryValue<T>.setValue(thisObj: Any?, property: KProperty<*>, value: T?) =
+    if (value == null) delete() else write(value)
+
+object Registry : Pathable {
+    override fun subKey(path: RegistryPath): RegistryKey = RegistryKey(path)
+
+    val currentUser = subKey(Hkeys.HKEY_CURRENT_USER)
+    val localMachine = subKey(Hkeys.HKEY_LOCAL_MACHINE)
+    val classesRoot = subKey(Hkeys.HKEY_CLASSES_ROOT)
+    val users = subKey(Hkeys.HKEY_USERS)
+    val currentConfig = subKey(Hkeys.HKEY_CURRENT_CONFIG)
+    val performanceData = subKey(Hkeys.HKEY_PERFORMANCE_DATA)
 }

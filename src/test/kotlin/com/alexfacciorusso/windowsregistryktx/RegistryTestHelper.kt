@@ -7,8 +7,8 @@ class RegistryTestHelper {
     private val testRoot = WinReg.HKEY_CURRENT_USER
     private val testKeyName = "TestRegistryKTX"
 
-    val testPath = Registry.currentUser[testKeyName].fullPath
-    val testKey = Registry[testPath]
+    val testPath = Registry.currentUser.subKey(testKeyName).fullPath
+    val testKey = Registry.subKey(testPath)
 
     fun init() {
         Advapi32Util.registryCreateKey(testRoot, testKeyName)
@@ -48,6 +48,10 @@ class RegistryTestHelper {
     fun writeStringArray(valueName: String, valueContent: Array<String>) {
         Advapi32Util.registrySetStringArray(testRoot, testKeyName, valueName, valueContent)
     }
+
+    fun keyExists(): Boolean = Advapi32Util.registryKeyExists(testRoot, testKeyName)
+
+    fun valueExists(valueName: String): Boolean = Advapi32Util.registryValueExists(testRoot, testKeyName, valueName)
 
     fun cleanup() {
         Advapi32Util.registryDeleteKey(testRoot, testKeyName)
