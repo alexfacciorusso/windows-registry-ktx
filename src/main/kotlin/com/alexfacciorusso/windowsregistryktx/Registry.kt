@@ -2,16 +2,22 @@ package com.alexfacciorusso.windowsregistryktx
 
 import com.sun.jna.platform.win32.Advapi32
 import com.sun.jna.platform.win32.Advapi32Util
+import com.sun.jna.platform.win32.Kernel32
+import com.sun.jna.platform.win32.WinNT.INFINITE
 import com.sun.jna.platform.win32.WinNT.KEY_ALL_ACCESS
 import com.sun.jna.platform.win32.WinNT.KEY_NOTIFY
 import com.sun.jna.platform.win32.WinNT.REG_NOTIFY_CHANGE_LAST_SET
 import com.sun.jna.platform.win32.WinReg
+import com.sun.jna.platform.win32.WinReg.HKEY
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.flow
-import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.suspendCancellableCoroutine
+import kotlinx.coroutines.withContext
+import kotlin.coroutines.CoroutineContext
+import kotlin.coroutines.resume
 import kotlin.reflect.KProperty
 
 private enum class Hkeys(private val alternateName: String) {
@@ -84,34 +90,60 @@ class RegistryKey internal constructor(path: RegistryPath) : Pathable, Deleteabl
 
     fun parent(): RegistryKey? = fullPath.parent()?.let { RegistryKey(it) }
 
+    private fun openHandle(accessLevel: Int = KEY_ALL_ACCESS) =
+        Advapi32Util.registryGetKey(rootHandle, pathWithoutRoot.toString(), accessLevel).asClosable()
+
     @Suppress("SameParameterValue")
-    private fun openHandle(accessLevel: Int = KEY_ALL_ACCESS): CloseableHkey =
-        CloseableHkey(Advapi32Util.registryGetKey(rootHandle, pathWithoutRoot.toString(), accessLevel).value)
+    private inline fun <T> openHandleAndThenDispose(accessLevel: Int = KEY_ALL_ACCESS, block: (HKEY?) -> T) =
+        openHandle(accessLevel).use {
+            block(it.hkeyReference.value ?: error("Cannot open key"))
+        }
+
+    private suspend fun notifyChangeInKeyValue(
+        includingKeySubtree: Boolean = false,
+    ) = suspendCancellableCoroutine {
+        val event = Kernel32.INSTANCE.CreateEvent(
+            /* lpEventAttributes = */ null,
+            /* bManualReset = */ true,
+            /* bInitialState = */ false,
+            /* lpName = */ null
+        )
+
+        val keyHandle = openHandle(KEY_NOTIFY)
+
+        Advapi32.INSTANCE.RegNotifyChangeKeyValue(
+            keyHandle.hkeyReference.value,
+            includingKeySubtree,
+            REG_NOTIFY_CHANGE_LAST_SET,
+            event,
+            true,
+        )
+
+        it.invokeOnCancellation {
+            Kernel32.INSTANCE.CloseHandle(event)
+            keyHandle.close()
+        }
+
+        val value = Kernel32.INSTANCE.WaitForSingleObject(event, INFINITE)
+
+        it.resume(value)
+    }
 
     fun flowChanges(
         includingKeySubtree: Boolean = false,
         emitOnStart: Boolean = true,
+        coroutineContext: CoroutineContext = Dispatchers.IO,
     ): Flow<Unit> = flow {
-        val hkeyContainer = openHandle(KEY_NOTIFY)
-
         if (emitOnStart) emit(Unit)
 
-        hkeyContainer.use {
-            while (true) {
-                val result = Advapi32.INSTANCE.RegNotifyChangeKeyValue(
-                    hkeyContainer.hkey,
-                    includingKeySubtree,
-                    REG_NOTIFY_CHANGE_LAST_SET,
-                    null,
-                    false,
-                )
+        while (true) {
+            val result = withContext(coroutineContext) { notifyChangeInKeyValue(includingKeySubtree) }
 
-                if (result == 0) { // WAIT_OBJECT_0
-                    emit(Unit)
-                }
+            if (result == 0) { // WAIT_OBJECT_0
+                emit(Unit)
             }
         }
-    }.flowOn(Dispatchers.IO)
+    }
 
     override fun delete() = Advapi32Util.registryDeleteKey(rootHandle, pathWithoutRoot.toString())
 
@@ -158,8 +190,14 @@ abstract class ReadableRegistryValue<T> internal constructor(val parentKey: Regi
     fun readOrThrow(): T =
         read() ?: errorForValue(typeName)
 
-    fun flowChanges(emitCurrentValue: Boolean = true): Flow<T?> =
-        parentKey.flowChanges(emitCurrentValue).map { read() }.distinctUntilChanged()
+    fun flowChanges(
+        emitCurrentValue: Boolean = true,
+        coroutineContext: CoroutineContext = Dispatchers.IO,
+    ): Flow<T?> =
+        parentKey.flowChanges(
+            emitOnStart = emitCurrentValue,
+            coroutineContext = coroutineContext,
+        ).map { read() }.distinctUntilChanged()
 }
 
 @Suppress("NOTHING_TO_INLINE")
